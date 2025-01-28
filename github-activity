@@ -1,0 +1,171 @@
+#!/usr/bin/env php
+<?php
+
+class GitHubActivityCLI {
+    private const API_BASE_URL = 'https://api.github.com';
+    private const USER_AGENT = 'GitHub-Activity-CLI';
+    private $debug = false;
+
+    private function fetchUserEvents(string $username): array {
+        if (empty($username)) {
+            throw new Exception("Username cannot be empty");
+        }
+
+        $url = self::API_BASE_URL . "/users/{$username}/events/public";
+        $ch = curl_init();
+
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_USERAGENT => self::USER_AGENT,
+            CURLOPT_HTTPHEADER => [
+                'Accept: application/vnd.github.v3+json',
+                'X-GitHub-Api-Version: 2022-11-28'
+            ],
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_SSL_VERIFYPEER => true
+        ]);
+
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        
+        if ($this->debug) {
+            echo "Debug Info:\n";
+            echo "URL: {$url}\n";
+            echo "HTTP Code: {$httpCode}\n";
+            echo "Response Headers:\n";
+            echo curl_getinfo($ch, CURLINFO_HEADER_OUT) . "\n";
+        }
+
+        if (curl_errno($ch)) {
+            throw new Exception("Error fetching data: " . curl_error($ch));
+        }
+        
+        curl_close($ch);
+
+        if ($httpCode === 404) {
+            throw new Exception("User not found: {$username}");
+        }
+
+        if ($httpCode === 403) {
+            throw new Exception("API rate limit exceeded. Please try again later.");
+        }
+
+        if ($httpCode !== 200) {
+            throw new Exception("GitHub API error. Status code: {$httpCode}");
+        }
+
+        $data = json_decode($response, true);
+        
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new Exception("Error decoding JSON response: " . json_last_error_msg());
+        }
+
+        if ($this->debug) {
+            echo "Number of events received: " . count($data) . "\n";
+            echo "Raw response:\n";
+            echo json_encode($data, JSON_PRETTY_PRINT) . "\n";
+        }
+
+        return $data;
+    }
+
+    private function formatEvent(array $event): string {
+        $type = $event['type'];
+        $repo = $event['repo']['name'];
+        
+        switch ($type) {
+            case 'PushEvent':
+                $commits = count($event['payload']['commits'] ?? []);
+                return "Pushed {$commits} commit" . ($commits === 1 ? '' : 's') . " to {$repo}";
+            
+            case 'CreateEvent':
+                $refType = $event['payload']['ref_type'];
+                return "Created {$refType} in {$repo}";
+            
+            case 'IssuesEvent':
+                $action = $event['payload']['action'];
+                return ucfirst($action) . " an issue in {$repo}";
+            
+            case 'PullRequestEvent':
+                $action = $event['payload']['action'];
+                return ucfirst($action) . " a pull request in {$repo}";
+            
+            case 'WatchEvent':
+                return "Starred {$repo}";
+            
+            case 'ForkEvent':
+                return "Forked {$repo}";
+
+            case 'CommitCommentEvent':
+                return "Commented on a commit in {$repo}";
+
+            case 'IssueCommentEvent':
+                return "Commented on an issue in {$repo}";
+
+            case 'DeleteEvent':
+                $refType = $event['payload']['ref_type'];
+                return "Deleted {$refType} in {$repo}";
+                
+            default:
+                return "{$type} in {$repo}";
+        }
+    }
+
+    public function run(array $args): void {
+        // Remove script name from arguments
+        array_shift($args);
+
+        // Check for debug flag
+        $this->debug = false;
+        $filteredArgs = [];
+        
+        foreach ($args as $arg) {
+            if ($arg === '--debug') {
+                $this->debug = true;
+            } else {
+                $filteredArgs[] = $arg;
+            }
+        }
+
+        if (empty($filteredArgs)) {
+            echo "Usage: github-activity [--debug] <username>\n";
+            echo "Example: github-activity --debug octocat\n";
+            exit(1);
+        }
+
+        $username = $filteredArgs[0];
+
+        try {
+            if ($this->debug) {
+                echo "Fetching events for user: {$username}\n";
+            }
+
+            $events = $this->fetchUserEvents($username);
+            
+            if (empty($events)) {
+                echo "No recent activity found for user: {$username}\n";
+                if ($this->debug) {
+                    echo "Note: This might be because:\n";
+                    echo "1. The user has no public activity\n";
+                    echo "2. The activity is older than 90 days (GitHub API limitation)\n";
+                    echo "3. The activities are not public\n";
+                }
+                exit(0);
+            }
+
+            echo "Recent activity for {$username}:\n";
+            foreach ($events as $event) {
+                echo "- " . $this->formatEvent($event) . "\n";
+            }
+
+        } catch (Exception $e) {
+            echo "Error: " . $e->getMessage() . "\n";
+            exit(1);
+        }
+    }
+}
+
+// Run the CLI
+$cli = new GitHubActivityCLI();
+$cli->run($argv);
