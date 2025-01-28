@@ -2,6 +2,8 @@
 
 A simple command-line interface (CLI) tool to fetch and display a GitHub user's recent activity. The tool uses GitHub's public API to fetch user events and display them in a readable format.
 
+This project Url: [GitHub User Activity CLI project](https://roadmap.sh/projects/github-user-activity) from roadmap.sh.
+
 ## Features
 
 - Fetch recent GitHub activity for any user
